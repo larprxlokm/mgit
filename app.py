@@ -92,35 +92,38 @@ class mGit(App):
         sidebar = self.query_one("#sidebar", ListView)
         sidebar.clear()
         
-        item = ListItem(Label(f"Profile: {PINNED_USER}"))
-        item.is_profile_link = True
-        item.username = PINNED_USER
-        sidebar.append(item)
+        profile_item = ListItem(Label(f"Profile: {PINNED_USER}"))
+        profile_item.is_profile_link = True
+        profile_item.username = PINNED_USER
+        sidebar.append(profile_item)
         
         sidebar.append(ListItem(Label("───────────────────")))
         
         for project in CURATED_PROJECTS:
-            item = ListItem(Label(f"Repo: {project['owner']}/{project['name']}"))
-            item.is_direct_repo = True
-            item.repo_owner = project['owner']
-            item.repo_name = project['name']
-            sidebar.append(item)
+            repo_item = ListItem(Label(f"Repo: {project['owner']}/{project['name']}"))
+            repo_item.is_direct_repo = True
+            repo_item.repo_owner = project['owner']
+            repo_item.repo_name = project['name']
+            sidebar.append(repo_item)
 
-        self.query_one("#repo-details", Static).update(
+        welcome_message = (
             "[#00ffcc][b]Welcome to mGit[/b][/#00ffcc]\n\n"
             "• Use the sidebar to click pinned projects or your profile\n"
             "• Use the search bar to look up any other public GitHub user\n"
             "• Press [b]H[/b] at any time to return to this home view"
         )
+        self.query_one("#repo-details", Static).update(welcome_message)
         self.query_one("#readme-content", Static).update("")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         username = event.value.strip()
-        if username:
-            sidebar = self.query_one("#sidebar", ListView)
-            sidebar.clear()
-            sidebar.append(ListItem(Label("Searching...")))
-            self.fetch_github_data(username)
+        if not username:
+            return
+            
+        sidebar = self.query_one("#sidebar", ListView)
+        sidebar.clear()
+        sidebar.append(ListItem(Label("Searching...")))
+        self.fetch_github_data(username)
 
     @work(exclusive=True)
     async def fetch_github_data(self, username: str) -> list:
@@ -131,7 +134,8 @@ class mGit(App):
             return response.json()
         elif response.status_code == 404:
             return [{"error": True, "message": "User not found"}]
-        return [{"error": True, "message": f"Status {response.status_code}"}]
+        else:
+            return [{"error": True, "message": f"Status {response.status_code}"}]
 
     @work(exclusive=True)
     async def fetch_single_repo_data(self, owner: str, name: str) -> dict:
@@ -140,7 +144,8 @@ class mGit(App):
         response = await HTTP_CLIENT.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
-        return {"error": True, "message": f"Status {response.status_code}"}
+        else:
+            return {"error": True, "message": f"Status {response.status_code}"}]
 
     @work(exclusive=True)
     async def fetch_readme(self, owner: str, name: str) -> str:
@@ -149,36 +154,41 @@ class mGit(App):
         response = await HTTP_CLIENT.get(url, headers=headers)
         if response.status_code == 200:
             return response.text
-        return "No README found or unable to fetch."
+        else:
+            return "No README found or unable to fetch."
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        if event.state == event.state.SUCCESS:
-            result = event.worker.result
+        if event.state != event.state.SUCCESS:
+            return
             
-            if isinstance(result, str):
-                self.query_one("#readme-content", Static).update(result)
+        result = event.worker.result
+        
+        if isinstance(result, str):
+            self.query_one("#readme-content", Static).update(result)
+            return
+
+        if isinstance(result, dict) and "owner" in result:
+            self.display_repo_details(result)
+            return
+
+        if isinstance(result, list):
+            sidebar = self.query_one("#sidebar", ListView)
+            sidebar.clear()
+            
+            if not result:
+                sidebar.append(ListItem(Label("No public repos")))
                 return
 
-            if isinstance(result, dict) and "owner" in result:
-                self.display_repo_details(result)
+            if result[0].get("error"):
+                error_message = result[0]["message"]
+                sidebar.append(ListItem(Label(error_message)))
                 return
 
-            if isinstance(result, list):
-                sidebar = self.query_one("#sidebar", ListView)
-                sidebar.clear()
-                
-                if not result:
-                    sidebar.append(ListItem(Label("No public repos")))
-                    return
-
-                if result[0].get("error"):
-                    sidebar.append(ListItem(Label(result[0]["message"])))
-                    return
-
-                for repo in result:
-                    item = ListItem(Label(repo.get("name", "Unknown")))
-                    item.repo_data = repo
-                    sidebar.append(item)
+            for repo in result:
+                repo_name = repo.get("name", "Unknown")
+                item = ListItem(Label(repo_name))
+                item.repo_data = repo
+                sidebar.append(item)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if hasattr(event.item, "is_profile_link"):
@@ -200,18 +210,28 @@ class mGit(App):
         if repo_data:
             self.display_repo_details(repo_data)
             self.query_one("#readme-content", Static).update("[yellow]Loading README...[/yellow]")
-            self.fetch_readme(repo_data["owner"]["login"], repo_data["name"])
+            owner_login = repo_data["owner"]["login"]
+            repo_name = repo_data["name"]
+            self.fetch_readme(owner_login, repo_name)
 
     def display_repo_details(self, repo_data: dict) -> None:
         self.active_repo_data = repo_data
         details_panel = self.query_one("#repo-details", Static)
+        
+        title = repo_data.get('full_name', repo_data.get('name'))
+        description = repo_data.get('description') or 'No description.'
+        stars = repo_data.get('stargazers_count')
+        forks = repo_data.get('forks_count')
+        issues = repo_data.get('open_issues_count')
+        url = repo_data.get('html_url')
+        
         content = (
-            f"[#00ffcc][b]{repo_data.get('full_name', repo_data.get('name'))}[/b][/#00ffcc]\n"
-            f"[#888888]{repo_data.get('description') or 'No description.'}[/#888888]\n\n"
-            f"Stars: {repo_data.get('stargazers_count')}  |  "
-            f"Forks: {repo_data.get('forks_count')}  |  "
-            f"Issues: {repo_data.get('open_issues_count')}\n"
-            f"URL: {repo_data.get('html_url')}"
+            f"[#00ffcc][b]{title}[/b][/#00ffcc]\n"
+            f"[#888888]{description}[/#888888]\n\n"
+            f"Stars: {stars}  |  "
+            f"Forks: {forks}  |  "
+            f"Issues: {issues}\n"
+            f"URL: {url}"
         )
         details_panel.update(content)
 
@@ -229,6 +249,7 @@ class mGit(App):
         if repo_data:
             owner = repo_data["owner"]["login"]
             repo_name = repo_data["name"]
+            
             details_panel = self.query_one("#repo-details", Static)
             details_panel.update("[yellow]Downloading repository archive...[/yellow]")
             self.download_archive(owner, repo_name)
@@ -243,7 +264,8 @@ class mGit(App):
         if response.status_code == 200:
             with open(filename, "wb") as f:
                 f.write(response.content)
-            self.update_status(f"Downloaded successfully to {os.path.abspath(filename)}")
+            absolute_path = os.path.abspath(filename)
+            self.update_status(f"Downloaded successfully to {absolute_path}")
         else:
             self.update_status(f"Download failed with status {response.status_code}")
 
