@@ -243,9 +243,9 @@ class mGit(App):
         if response.status_code == 200:
             with open(filename, "wb") as f:
                 f.write(response.content)
-            self.call_from_thread(self.update_status, f"Downloaded successfully to {os.path.abspath(filename)}")
+            self.update_status(f"Downloaded successfully to {os.path.abspath(filename)}")
         else:
-            self.call_from_thread(self.update_status, f"Download failed with status {response.status_code}")
+            self.update_status(f"Download failed with status {response.status_code}")
 
     def update_status(self, message: str) -> None:
         self.query_one("#repo-details", Static).update(message)
