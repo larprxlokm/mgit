@@ -145,7 +145,7 @@ class mGit(App):
         if response.status_code == 200:
             return response.json()
         else:
-            return {"error": True, "message": f"Status {response.status_code}"}]
+            return {"error": True, "message": f"Status {response.status_code}"}
 
     @work(exclusive=True)
     async def fetch_readme(self, owner: str, name: str) -> str:
