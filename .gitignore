@@ -1,0 +1,8 @@
+# GitHub Token safety
+.env
+*.env
+
+# App generated files
+*.zip
+__pycache__/
+*.pyc
