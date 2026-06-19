@@ -16,7 +16,7 @@ CURATED_PROJECTS = [
 
 HTTP_CLIENT = httpx.AsyncClient(
     follow_redirects=True,
-    timeout=httpx.Timeout(5.0, connect=2.0),
+    timeout=httpx.Timeout(10.0, connect=3.0),
     limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
 )
 
@@ -129,37 +129,48 @@ class mGit(App):
     async def fetch_github_data(self, username: str) -> list:
         url = f"https://api.github.com/users/{username}/repos?sort=updated"
         headers = {"Accept": "application/vnd.github.v3+json"}
-        response = await HTTP_CLIENT.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 403:
-            return [{"error": True, "message": "GitHub Rate Limit Exceeded"}]
-        elif response.status_code == 404:
-            return [{"error": True, "message": "User not found"}]
-        else:
-            return [{"error": True, "message": f"Status {response.status_code}"}]
+        try:
+            response = await HTTP_CLIENT.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 403:
+                return [{"error": True, "message": "GitHub Rate Limit Exceeded"}]
+            elif response.status_code == 404:
+                return [{"error": True, "message": "User not found"}]
+            else:
+                return [{"error": True, "message": f"Status {response.status_code}"}]
+        except httpx.RequestError:
+            return [{"error": True, "message": "Network error fetching repos"}]
 
     @work(exclusive=True)
     async def fetch_single_repo_data(self, owner: str, name: str) -> dict:
         url = f"https://api.github.com/repos/{owner}/{name}"
         headers = {"Accept": "application/vnd.github.v3+json"}
-        response = await HTTP_CLIENT.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": True, "message": f"Status {response.status_code}"}
+        try:
+            response = await HTTP_CLIENT.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"error": True, "message": f"Status {response.status_code}"}
+        except httpx.RequestError:
+            return {"error": True, "message": "Network error fetching repo data"}
 
     @work(exclusive=True)
     async def fetch_readme(self, owner: str, name: str) -> str:
         url = f"https://api.github.com/repos/{owner}/{name}/readme"
         headers = {"Accept": "application/vnd.github.v3.raw"}
-        response = await HTTP_CLIENT.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.text
-        elif response.status_code == 403:
-            return "GitHub Rate Limit Exceeded. Cannot fetch README."
-        else:
-            return "No README found or unable to fetch."
+        try:
+            response = await HTTP_CLIENT.get(url, headers=headers)
+            if response.status_code == 200:
+                if len(response.text) > 50000:
+                    return response.text[:50000] + "\n\n... [Truncated due to size] ..."
+                return response.text
+            elif response.status_code == 403:
+                return "GitHub Rate Limit Exceeded. Cannot fetch README."
+            else:
+                return "No README found or unable to fetch."
+        except httpx.RequestError:
+            return "Network error fetching README."
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state != event.state.SUCCESS:
@@ -255,7 +266,7 @@ class mGit(App):
             repo_name = repo_data["name"]
             
             details_panel = self.query_one("#repo-details", Static)
-            details_panel.update("[yellow]Downloading repository archive...[/yellow]")
+            details_panel.update("[yellow]Downloading (streaming chunk by chunk)...[/yellow]")
             self.download_archive(owner, repo_name)
 
     @work(exclusive=False)
@@ -264,14 +275,20 @@ class mGit(App):
         headers = {"Accept": "application/vnd.github.v3+json"}
         filename = f"{repo_name}.zip"
         
-        response = await HTTP_CLIENT.get(url, headers=headers)
-        if response.status_code == 200:
-            with open(filename, "wb") as f:
-                f.write(response.content)
-            absolute_path = os.path.abspath(filename)
-            self.update_status(f"Downloaded successfully to {absolute_path}")
-        else:
-            self.update_status(f"Download failed with status {response.status_code}")
+        try:
+            download_timeout = httpx.Timeout(300.0, connect=10.0)
+            
+            async with HTTP_CLIENT.stream("GET", url, headers=headers, timeout=download_timeout) as response:
+                if response.status_code == 200:
+                    with open(filename, "wb") as f:
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                    absolute_path = os.path.abspath(filename)
+                    self.update_status(f"Downloaded successfully to {absolute_path}")
+                else:
+                    self.update_status(f"Download failed with status {response.status_code}")
+        except Exception as e:
+            self.update_status(f"Download failed: Connection timed out or reset.")
 
     def update_status(self, message: str) -> None:
         self.query_one("#repo-details", Static).update(message)
