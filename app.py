@@ -132,6 +132,8 @@ class mGit(App):
         response = await HTTP_CLIENT.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
+        elif response.status_code == 403:
+            return [{"error": True, "message": "GitHub Rate Limit Exceeded"}]
         elif response.status_code == 404:
             return [{"error": True, "message": "User not found"}]
         else:
@@ -154,6 +156,8 @@ class mGit(App):
         response = await HTTP_CLIENT.get(url, headers=headers)
         if response.status_code == 200:
             return response.text
+        elif response.status_code == 403:
+            return "GitHub Rate Limit Exceeded. Cannot fetch README."
         else:
             return "No README found or unable to fetch."
 
