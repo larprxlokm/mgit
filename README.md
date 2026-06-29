@@ -4,6 +4,8 @@ mGit is a fast, lightweight, and streamlined Terminal User Interface (TUI) for e
 
 Built with Python and Textual.
 
+# Website: mgit.great-site.net
+
 ## Features
 
 - **Quick Launch Pins:** Immediate access to curated projects and your personal GitHub profile from startup.
